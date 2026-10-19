@@ -13,6 +13,7 @@ import yaml
 import csv
 import json
 import argparse
+import miniatura
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
@@ -108,6 +109,11 @@ def fetch_recent_trades(api_url: str, limit: int = 100) -> list:
             salida.append({
                 "market": cid,
                 "side": t.get("outcome") or t.get("side"),
+                "slug": t.get("slug") or "",
+                "eventSlug": t.get("eventSlug") or "",
+                "asset": t.get("asset") or "",
+                "title": t.get("title") or "",
+                "icon": t.get("icon") or "",
                 "size": t.get("size"),
                 "price": t.get("price"),
                 "timestamp": t.get("timestamp"),
@@ -232,7 +238,7 @@ def send_telegram_alert(bot_token: str, chat_id: str, message: str) -> bool:
 
 
 def format_discord_message(market_title: str, side: str, amount_usd: float,
-                            price: float, timestamp: str) -> str:
+                            price: float, timestamp: str, links: str = "") -> str:
     """Format a Discord alert message."""
     ts = timestamp or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     side_emoji = "✅" if side == "YES" else "❌"
@@ -246,20 +252,28 @@ def format_discord_message(market_title: str, side: str, amount_usd: float,
         f"**Amount:** `${amount_usd:,.2f}`\n"
         f"**Price:**   `{price:.4f}` ({prob_pct}% {side})\n"
         f"{'─' * 30}"
+        + (f"\n{links}" if links else "")
     )
 
 
-def send_discord_alert(webhook_url: str, message: str) -> bool:
+def send_discord_alert(webhook_url: str, message: str, imagen: str | None = None) -> bool:
     """Manda por webhook o, si hay token+canal (GitHub Actions), por la API del bot."""
     token = os.getenv("DISCORD_BOT_TOKEN", "")
     canal = os.getenv("DISCORD_CHANNEL", "")
     if token and canal:
         try:
-            resp = requests.post(
-                f"https://discord.com/api/v10/channels/{canal}/messages",
-                headers={"Authorization": f"Bot {token}", "Content-Type": "application/json",
-                         "User-Agent": "polymarket-whales/1.0"},
-                json={"content": message[:1900], "flags": 4}, timeout=15)
+            if imagen and os.path.exists(imagen):
+                resp = requests.post(
+                    f"https://discord.com/api/v10/channels/{canal}/messages",
+                    headers={"Authorization": f"Bot {token}", "User-Agent": "polymarket-whales/1.0"},
+                    data={"payload_json": json.dumps({"content": message[:1900], "flags": 4})},
+                    files={"files[0]": ("miniatura.png", open(imagen, "rb"), "image/png")}, timeout=30)
+            else:
+                resp = requests.post(
+                    f"https://discord.com/api/v10/channels/{canal}/messages",
+                    headers={"Authorization": f"Bot {token}", "Content-Type": "application/json",
+                             "User-Agent": "polymarket-whales/1.0"},
+                    json={"content": message[:1900], "flags": 4}, timeout=15)
             resp.raise_for_status()
             return True
         except Exception as e:
@@ -452,10 +466,25 @@ def run(config: dict, export_path: str = None) -> None:
                 if ok:
                     logger.debug("✅ Telegram alert sent.")
 
+            # links: la predicción en Polymarket y el perfil de la wallet
+            _slug = trade.get("eventSlug") or trade.get("slug") or ""
+            _partes = []
+            if _slug:
+                _partes.append(f"[Polymarket](https://polymarket.com/event/{_slug})")
+            if wallet:
+                _partes.append(f"[Perfil](https://polymarket.com/profile/{wallet})")
+            _links = ("🔗 Links\n" + " · ".join(_partes)) if _partes else ""
+
             # Send Discord alert
             if discord_enabled:
-                ds_msg = format_discord_message(market_title, side, amount_usd, price, ts)
-                ok = send_discord_alert(discord_webhook, ds_msg)
+                ds_msg = format_discord_message(market_title, side, amount_usd, price, ts, _links)
+                try:                       # miniatura (arte) del mercado
+                    _png = miniatura.para_trade(trade, os.path.join(os.path.dirname(__file__), "charts",
+                                                                    f"pm_{int(time.time())}.png"))
+                except Exception as e:
+                    logger.warning(f"gráfico: {str(e)[:60]}")
+                    _png = None
+                ok = send_discord_alert(discord_webhook, ds_msg, _png)
                 if ok:
                     logger.debug("✅ Discord alert sent.")
 
