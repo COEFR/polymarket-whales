@@ -16,3 +16,7 @@ telegram:
 
 polymarket:
   api_url: "https://clob.polymarket.com"
+
+discord:
+  # vacío: en GitHub Actions se usa el token del bot + DISCORD_CHANNEL
+  webhook_url: ""

@@ -33,3 +33,18 @@ jobs:
           timeout 260 python3 main.py; code=$?
           if [ "$code" = "124" ]; then echo "corte programado a los 260 s"; exit 0; fi
           exit $code
+
+      - name: Guardar el estado (trades ya vistos)
+        working-directory: repo
+        run: |
+          git add -A seen.json || true
+          if git diff --cached --quiet; then
+            echo "sin cambios de estado"
+            exit 0
+          fi
+          git -c user.name="polymarket-whales" -c user.email="bot@users.noreply.github.com" \
+              commit -m "vistos $(date -u '+%Y-%m-%d %H:%M UTC')"
+          for i in 1 2 3; do
+            if git pull --rebase --autostash origin main && git push; then break; fi
+            sleep 3
+          done

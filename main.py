@@ -14,6 +14,7 @@ import csv
 import json
 import argparse
 from datetime import datetime, timezone
+from pathlib import Path
 from dotenv import load_dotenv
 from colorama import init, Fore, Style
 
@@ -81,21 +82,39 @@ def load_config(path: str = "config.yaml") -> dict:
 # ─────────────────────────────────────────────
 # Polymarket API
 # ─────────────────────────────────────────────
+_TITLES: dict = {}
+
+
 def fetch_recent_trades(api_url: str, limit: int = 100) -> list:
-    """Fetch recent trades from Polymarket CLOB API."""
-    url = f"{api_url}/trades"
-    params = {"limit": limit}
+    """Trades recientes desde la API PÚBLICA de datos de Polymarket.
+
+    La API del CLOB (`/trades`) ahora responde 401 (pide autenticación), así que el repo
+    original quedó sin datos. `data-api.polymarket.com/trades` es pública y trae lo mismo
+    que hace falta: mercado, resultado (Yes/No), tamaño, precio, hora y la wallet.
+    """
+    url = f"https://data-api.polymarket.com/trades?limit={limit}"
     try:
-        resp = requests.get(url, params=params, timeout=15)
+        resp = requests.get(url, headers={"User-Agent": "polymarket-whales/1.0"}, timeout=15)
         resp.raise_for_status()
-        data = resp.json()
-        # The CLOB API returns {"data": [...], "next_cursor": ...}
-        if isinstance(data, dict) and "data" in data:
-            return data["data"]
-        # Some endpoints return a list directly
-        if isinstance(data, list):
-            return data
-        return []
+        datos = resp.json()
+        if not isinstance(datos, list):
+            return []
+        salida = []
+        for t in datos:
+            cid = t.get("conditionId") or ""
+            if t.get("title"):
+                _TITLES[cid] = t["title"]
+            wallet = t.get("proxyWallet") or ""
+            salida.append({
+                "market": cid,
+                "side": t.get("outcome") or t.get("side"),
+                "size": t.get("size"),
+                "price": t.get("price"),
+                "timestamp": t.get("timestamp"),
+                "wallet": wallet,
+                "id": f"{wallet}-{t.get('timestamp')}-{t.get('size')}-{t.get('price')}-{t.get('outcome')}",
+            })
+        return salida
     except requests.exceptions.ConnectionError:
         logger.warning("⚠️  Network error: could not reach Polymarket API.")
         return []
@@ -110,30 +129,6 @@ def fetch_recent_trades(api_url: str, limit: int = 100) -> list:
         return []
 
 
-def fetch_market_info(condition_id: str) -> dict:
-    """
-    Fetch market metadata (title, etc.) from Polymarket Gamma API.
-    Returns a dict with at least 'question' key.
-    """
-    url = "https://gamma-api.polymarket.com/markets"
-    params = {"condition_id": condition_id}
-    try:
-        resp = requests.get(url, params=params, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data, list) and len(data) > 0:
-            return data[0]
-        if isinstance(data, dict):
-            return data
-        return {}
-    except Exception as e:
-        logger.debug(f"Could not fetch market info for {condition_id}: {e}")
-        return {}
-
-
-# ─────────────────────────────────────────────
-# Trade processing
-# ─────────────────────────────────────────────
 def parse_trade_usd_size(trade: dict) -> float:
     """
     Calculate the USD size of a trade.
@@ -328,6 +323,8 @@ _market_cache: dict = {}
 
 def get_market_title(condition_id: str) -> str:
     """Return market title, using a local cache to reduce API calls."""
+    if condition_id in _TITLES:
+        return _TITLES[condition_id]
     if condition_id in _market_cache:
         return _market_cache[condition_id]
 
@@ -375,8 +372,19 @@ def run(config: dict, export_path: str = None) -> None:
     if not (telegram_enabled or discord_enabled):
         logger.info("ℹ️  Alerts not configured — terminal-only mode.")
 
+    # El endpoint público se actualiza cada ~2 min y cada job de Actions arranca de cero:
+    # sin estado, cada corrida "siembra" y no alerta nada. Los ids vistos se guardan en
+    # seen.json (el workflow lo commitea al terminar).
+    estado = Path(__file__).with_name("seen.json")
     seen_ids: set = set()
     first_run = True
+    if estado.exists():
+        try:
+            seen_ids = set(json.load(open(estado)))
+            first_run = False
+            logger.info(f"estado cargado: {len(seen_ids)} trades ya vistos")
+        except Exception as e:
+            logger.warning(f"no pude leer seen.json: {e}")
 
     while True:
         try:
@@ -430,6 +438,9 @@ def run(config: dict, export_path: str = None) -> None:
 
             # Fetch market title
             market_title = get_market_title(condition_id) if condition_id else "Unknown Market"
+            wallet = trade.get("wallet") or ""
+            if wallet:
+                market_title = f"{market_title} · {wallet[:6]}…{wallet[-4:]}"
 
             # Print terminal alert
             print(format_terminal_alert(market_title, side, amount_usd, price, ts))
@@ -450,6 +461,12 @@ def run(config: dict, export_path: str = None) -> None:
 
         # Update seen set (keep it bounded)
         seen_ids = new_seen
+        try:                                   # guardar para la próxima corrida
+            tmp = estado.with_suffix(".tmp")
+            json.dump(list(seen_ids)[-5000:], open(tmp, "w"))
+            tmp.replace(estado)
+        except Exception as e:
+            logger.warning(f"no pude guardar seen.json: {e}")
         first_run = False
 
         if whale_count == 0 and not first_run:
