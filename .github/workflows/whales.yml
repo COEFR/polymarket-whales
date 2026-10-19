@@ -29,8 +29,10 @@ jobs:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_CHANNEL: ${{ vars.DISCORD_CHANNEL }}
         run: |
-          # timeout devuelve 124 cuando corta a propósito: eso NO es un fallo
-          timeout 260 python3 main.py; code=$?
+          # timeout devuelve 124 cuando corta a propósito: eso NO es un fallo.
+          # `|| code=$?` evita que bash -e aborte antes de poder evaluarlo.
+          code=0
+          timeout 260 python3 main.py || code=$?
           if [ "$code" = "124" ]; then echo "corte programado a los 260 s"; exit 0; fi
           exit $code
 
