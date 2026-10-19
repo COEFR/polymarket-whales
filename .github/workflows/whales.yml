@@ -1,0 +1,35 @@
+name: polymarket-whales
+
+# Corre 4 minutos cada 5: el script escucha el CLOB y avisa cuando entra una orden
+# mayor al umbral. El primer pase siembra los trades vistos; después alerta.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: polymarket-whales
+  cancel-in-progress: false
+
+jobs:
+  correr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Traer el repo
+        run: |
+          git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" repo
+
+      - name: Dependencias
+        run: python3 -m pip install --quiet -r repo/requirements.txt
+
+      - name: Escuchar ballenas 4 minutos
+        working-directory: repo
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_CHANNEL: ${{ vars.DISCORD_CHANNEL }}
+        run: |
+          # timeout devuelve 124 cuando corta a propósito: eso NO es un fallo
+          timeout 260 python3 main.py; code=$?
+          if [ "$code" = "124" ]; then echo "corte programado a los 260 s"; exit 0; fi
+          exit $code
