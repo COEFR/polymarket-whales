@@ -7,6 +7,9 @@ on:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write            # el estado (seen.json) se commitea al terminar
+
 concurrency:
   group: polymarket-whales
   cancel-in-progress: false
