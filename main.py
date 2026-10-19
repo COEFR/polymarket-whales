@@ -238,7 +238,8 @@ def send_telegram_alert(bot_token: str, chat_id: str, message: str) -> bool:
 
 
 def format_discord_message(market_title: str, side: str, amount_usd: float,
-                            price: float, timestamp: str, links: str = "") -> str:
+                            price: float, timestamp: str, links: str = "",
+                            wallet: str = "") -> str:
     """Format a Discord alert message."""
     ts = timestamp or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     side_emoji = "✅" if side == "YES" else "❌"
@@ -251,7 +252,8 @@ def format_discord_message(market_title: str, side: str, amount_usd: float,
         f"**Side:**    {side_emoji} {side}\n"
         f"**Amount:** `${amount_usd:,.2f}`\n"
         f"**Price:**   `{price:.4f}` ({prob_pct}% {side})\n"
-        f"{'─' * 30}"
+        + (f"**Wallet:**  `{wallet[:6]}…{wallet[-4:]}`\n" if wallet else "")
+        + f"{'─' * 30}"
         + (f"\n{links}" if links else "")
     )
 
@@ -453,8 +455,6 @@ def run(config: dict, export_path: str = None) -> None:
             # Fetch market title
             market_title = get_market_title(condition_id) if condition_id else "Unknown Market"
             wallet = trade.get("wallet") or ""
-            if wallet:
-                market_title = f"{market_title} · {wallet[:6]}…{wallet[-4:]}"
 
             # Print terminal alert
             print(format_terminal_alert(market_title, side, amount_usd, price, ts))
@@ -477,7 +477,7 @@ def run(config: dict, export_path: str = None) -> None:
 
             # Send Discord alert
             if discord_enabled:
-                ds_msg = format_discord_message(market_title, side, amount_usd, price, ts, _links)
+                ds_msg = format_discord_message(market_title, side, amount_usd, price, ts, _links, wallet)
                 try:                       # miniatura (arte) del mercado
                     _png = miniatura.para_trade(trade, os.path.join(os.path.dirname(__file__), "charts",
                                                                     f"pm_{int(time.time())}.png"))

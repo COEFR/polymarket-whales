@@ -54,7 +54,6 @@ def por_condicion(condition_id: str) -> str | None:
     return None
 
 
-<<<<<<< HEAD
 def por_evento(slug: str) -> str | None:
     """Segundo respaldo: la imagen del evento (cuando el mercado no tiene arte propio)."""
     if not slug:
@@ -77,9 +76,4 @@ def para_trade(trade: dict, salida: str) -> str | None:
     url = (trade.get("icon")
            or por_condicion(cid)
            or por_evento(trade.get("eventSlug") or trade.get("slug") or ""))
-=======
-def para_trade(trade: dict, salida: str) -> str | None:
-    """Miniatura del mercado: el `icon` del trade o, si falta, la imagen de la API gamma."""
-    url = trade.get("icon") or por_condicion(trade.get("conditionId") or trade.get("market") or "")
->>>>>>> bada683 (alerta con la miniatura del mercado (icon de la API) en vez de un gráfico)
     return descargar(url, salida)
